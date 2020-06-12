@@ -1,3 +1,27 @@
+/* ============================================
+I2Cdev device library code is placed under the MIT license
+Copyright (c) 2012 Jeff Rowberg
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+===============================================
+*/
+
 #include "Wire.h"
 #include "I2Cdev.h"
 #include "MPU6050_6Axis_MotionApps20.h"
@@ -28,8 +52,7 @@ VectorFloat gravity;    // [x, y, z]            gravity vector
 float euler[3];         // [psi, theta, phi]    Euler angle container
 float ypr[3];           // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
 
-int16_t MPUOffset[6] = {0,0,0,0,0,0};  // {XAccel, YAccel, ZAccel, XGyro, YGyro, ZGyro}
-
+int16_t MPUOffset[6] = {-264, 1411, 1292, 74, 11, 62};  // {XAccel, YAccel, ZAccel, XGyro, YGyro, ZGyro}
 
 
 
@@ -97,9 +120,9 @@ void setup() {
     // make sure it worked (returns 0 if so)
     if (devStatus == 0) {
         // Calibration Time: generate offsets and calibrate our MPU6050
-        mpu.CalibrateAccel(6);
-        mpu.CalibrateGyro(6);
-        mpu.PrintActiveOffsets();
+        // mpu.CalibrateAccel(6);
+        // mpu.CalibrateGyro(6);
+        // mpu.PrintActiveOffsets();
         // turn on the DMP, now that it's ready
         Serial.println(F("Enabling DMP..."));
         mpu.setDMPEnabled(true);
