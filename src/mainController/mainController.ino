@@ -26,16 +26,20 @@ THE SOFTWARE.
 #include "I2Cdev.h"
 #include "MPU6050_6Axis_MotionApps20.h"
 
-#define BODY 0
-#define HAND 1
+#define BODY 1
+#define HAND 0
 #define ARM_LO 2
 #define ARM_UP 3
 
-int INTERRUPT_PIN[2] = {1, 0};  // use 0,1,2,3,7 on leonardo
-int AD0_PIN[4] = {4, 5, 6, 7};  // control ad0
+#define EMG_DATA_LENGTH 200
+
+
+int EMG_PIN = A0;
+
+int EMGData[EMG_DATA_LENGTH];
+
 
 MPU6050 mpu0(0x68);  // AD0 low
-MPU6050 mpu1(0x69);  // AD0 high
 
 // MPU control/status vars
 bool dmpReady[2] = {false, false};  // set true if DMP init was successful
@@ -51,48 +55,15 @@ VectorInt16 aa;         // [x, y, z]            accel sensor measurements
 VectorInt16 aaReal;     // [x, y, z]            gravity-free accel sensor measurements
 VectorFloat gravity;    // [x, y, z]            gravity vector
 
-VectorInt16 aaWorld[4];    // [x, y, z]            world-frame accel sensor measurements
-float ypr[4][3];           // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
+VectorInt16 aaWorld[2];    // [x, y, z]            world-frame accel sensor measurements
+float ypr[2][3];           // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
 
 // {XAccel, YAccel, ZAccel, XGyro, YGyro, ZGyro}
-int16_t MPUOffset[4][6] = {-82, 1479, 1288, 77, 0, 53, // #5
-                           -1154, 51, 536, 111, 81, 19, // #6
-                           -264, 1411, 1292, 74, 11, 62,
-                           -264, 1411, 1292, 74, 11, 62};
-
-bool sensorState[4] = {false, false, false, false};
-
+int16_t MPUOffset[2][6] = {-82, 1479, 1288, 77, 0, 53, // #5
+                           -1154, 51, 536, 111, 81, 19}; //#6
 
 unsigned long startTime = 0, endTime = 0;
 
-
-// ================================================================
-// ===               INTERRUPT DETECTION ROUTINE                ===
-// ================================================================
-
-volatile bool mpuInterrupt[2] = {false, false};     // indicates whether MPU interrupt pin has gone high
-void dmp0DataReady() {
-    mpuInterrupt[0] = true;
-}
-void dmp1DataReady() {
-    mpuInterrupt[1] = true;
-}
-
-void enableDMP(){
-    Serial.println("Enabling DMP...");
-
-    digitalWrite(AD0_PIN[BODY], false);
-    digitalWrite(AD0_PIN[HAND], true);
-    delay(50);
-
-    mpu0.setDMPEnabled(true);
-
-    digitalWrite(AD0_PIN[BODY], true);
-    digitalWrite(AD0_PIN[HAND], false);
-    delay(50);
-
-    mpu0.setDMPEnabled(true);
-}
 
 void setOffset(MPU6050* mpu, int16_t* offsets) {
 
@@ -103,36 +74,6 @@ void setOffset(MPU6050* mpu, int16_t* offsets) {
     mpu->setYGyroOffset(offsets[4]);
     mpu->setZGyroOffset(offsets[5]);
 }
-
-
-void initSensor(){
-    Serial.println("Initialize Sensor");
-
-    sensorState[BODY] = false;    // mpu0: work at low
-    sensorState[HAND] = true;     // mpu0
-    sensorState[ARM_LO] = true;   // mpu1: work at high
-    sensorState[ARM_UP] = false;  // mpu1
-
-    digitalWrite(AD0_PIN[BODY], sensorState[BODY]);
-    digitalWrite(AD0_PIN[HAND], sensorState[HAND]);
-    // digitalWrite(AD0_PIN[ARM_LO], sensorState[ARM_LO]);
-    // digitalWrite(AD0_PIN[ARM_UP], sensorState[ARM_UP]);
-
-}
-
-
-
-void switchSensor(){
-
-    for(int i=0;i<4;++i){
-        sensorState[i] = !sensorState[i];
-    }
-
-    digitalWrite(AD0_PIN[BODY], sensorState[BODY]);
-    digitalWrite(AD0_PIN[HAND], sensorState[HAND]);
-
-}
-
 
 
 void printRealWorldAccel(int sensor){
@@ -170,7 +111,8 @@ void printAll(int sensor){
     Serial.println(ypr[sensor][2] * 180/M_PI);
 }
 
-void getSingleMPUData(MPU6050* mpu, int mpuNum, int sensor){
+
+void readMPUData(MPU6050* mpu, int mpuNum, int sensor){
     // wait for MPU interrupt or extra packet(s) available
     mpu->resetFIFO();
     fifoCount[mpuNum] = mpu->getFIFOCount();
@@ -183,41 +125,24 @@ void getSingleMPUData(MPU6050* mpu, int mpuNum, int sensor){
         // reset so we can continue cleanly
         mpu->resetFIFO();
         Serial.println(F("FIFO overflow!"));
-
-    // otherwise, check for DMP data ready interrupt (this should happen frequently)
+        return;
     }
-    else {
 
-        // read a packet from FIFO
-        while(fifoCount[mpuNum] >= packetSize[mpuNum]){ // Lets catch up to NOW, someone is using the dreaded delay()!
-            mpu->getFIFOBytes(fifoBuffer[mpuNum], packetSize[mpuNum]);
-            // track FIFO count here in case there is > 1 packet available
-            // (this lets us immediately read more without waiting for an interrupt)
-            fifoCount[mpuNum] -= packetSize[mpuNum];
-        }
-
-        // display initial world-frame acceleration, adjusted to remove gravity
-        // and rotated based on known orientation from quaternion
-        mpu->dmpGetQuaternion(&q, fifoBuffer[mpuNum]);
-        mpu->dmpGetAccel(&aa, fifoBuffer[mpuNum]);
-        mpu->dmpGetGravity(&gravity, &q);
-        mpu->dmpGetLinearAccel(&aaReal, &aa, &gravity);
-        mpu->dmpGetLinearAccelInWorld(&aaWorld[sensor], &aaReal, &q);
-        mpu->dmpGetYawPitchRoll(ypr[sensor], &q, &gravity);
+    // read a packet from FIFO
+    while(fifoCount[mpuNum] >= packetSize[mpuNum]){ // Lets catch up to NOW, someone is using the dreaded delay()!
+        mpu->getFIFOBytes(fifoBuffer[mpuNum], packetSize[mpuNum]);
+        fifoCount[mpuNum] -= packetSize[mpuNum];
     }
-}
 
-
-void getMPUData(){
-
-    getSingleMPUData(&mpu0, 0, BODY);
-    // getSingleMPUData(&mpu1, ARM_LO);
-    switchSensor();
-
-    getSingleMPUData(&mpu0, 0, HAND);
-    // getSingleMPUData(&mpu1, ARM_UP);
-    switchSensor();
-
+    // display initial world-frame acceleration, adjusted to remove gravity
+    // and rotated based on known orientation from quaternion
+    mpu->dmpGetQuaternion(&q, fifoBuffer[mpuNum]);
+    mpu->dmpGetAccel(&aa, fifoBuffer[mpuNum]);
+    mpu->dmpGetGravity(&gravity, &q);
+    mpu->dmpGetLinearAccel(&aaReal, &aa, &gravity);
+    mpu->dmpGetLinearAccelInWorld(&aaWorld[sensor], &aaReal, &q);
+    mpu->dmpGetYawPitchRoll(ypr[sensor], &q, &gravity);
+    
 }
 
 int calMPULevel(int* mpuData){
@@ -226,14 +151,36 @@ int calMPULevel(int* mpuData){
 }
 
 
-void getEMGData(){
+void readEMGData(int dt){
 
+    for(int i=0;i<EMG_DATA_LENGTH;++i){
+        EMGData[i] = analogRead(EMG_PIN);
+        delay(dt);
+    }
 }
-
 
 int calEMGLevel(int* emgData){
 
-    return 0;
+    double var = 0.;
+    double mean = 0.;
+    for (int i = 0; i < EMG_DATA_LENGTH; ++i){
+        mean += emgData[i];
+    }
+    mean /= EMG_DATA_LENGTH;
+    for(int i=0;i<EMG_DATA_LENGTH;++i){
+        var += sq(emgData[i]-mean);
+    }
+    var /= EMG_DATA_LENGTH;
+
+    if(var > 20) {
+        return 2;
+    }
+    else if(var > 5){
+        return 1;
+    }
+    else {
+        return 0;
+    }
 }
 
 
@@ -249,10 +196,6 @@ void sendMovement(int movement){
 
 
 
-// ================================================================
-// ===                      INITIAL SETUP                       ===
-// ================================================================
-
 void setup() {
     // join I2C bus (I2Cdev library doesn't do this automatically)
 
@@ -262,15 +205,6 @@ void setup() {
     Serial.begin(115200);
     while (!Serial); // wait for Leonardo enumeration, others continue immediately
 
-    pinMode(INTERRUPT_PIN[0], INPUT);
-    pinMode(INTERRUPT_PIN[1], INPUT);
-
-    pinMode(AD0_PIN[0], OUTPUT);
-    pinMode(AD0_PIN[1], OUTPUT);
-    // pinMode(AD0_PIN[2], OUTPUT);
-    // pinMode(AD0_PIN[3], OUTPUT);
-
-
     // wait for ready
     Serial.println(F("\nSend any character to begin"));
     while (Serial.available() && Serial.read()); // empty buffer
@@ -278,11 +212,7 @@ void setup() {
     while (Serial.available() && Serial.read()); // empty buffer again
 
 
-    // initialize device
     Serial.println(F("Initializing I2C devices..."));
-    digitalWrite(AD0_PIN[BODY], false);
-    digitalWrite(AD0_PIN[HAND], true);
-    delay(50);
 
     mpu0.initialize();
     Serial.println(F("Testing device connections..."));
@@ -291,34 +221,10 @@ void setup() {
     setOffset(&mpu0, MPUOffset[BODY]);
     mpu0.PrintActiveOffsets();
 
-    Serial.println(F("Initializing I2C devices..."));
-    digitalWrite(AD0_PIN[BODY], true);
-    digitalWrite(AD0_PIN[HAND], false);
-    delay(50);
-
-    mpu0.initialize();
-    Serial.println(F("Testing device connections..."));
-    Serial.println(mpu0.testConnection() ? F("MPU6050 connection successful") : F("MPU6050 connection failed"));
-    devStatus[1] = mpu0.dmpInitialize();
-    setOffset(&mpu0, MPUOffset[HAND]);
-    mpu0.PrintActiveOffsets();
-
-    // devStatus[0] = setOffsets();
-    // load and configure the DMP
-    // Serial.println(F("Initializing DMP..."));
-    // devStatus[0] = mpu0.dmpInitialize();
-
-    // setOffset(&mpu0, MPUOffset[0]);
-    // mpu0.PrintActiveOffsets();
-
     // make sure it worked (returns 0 if so)
     if (devStatus[0] == 0) {
 
-        // turn on the DMP, now that it's ready
-        // Serial.println(F("Enabling DMP..."));
-        // mpu0.setDMPEnabled(true);
-        enableDMP();
-        initSensor();
+        mpu0.setDMPEnabled(true);
 
         // set our DMP Ready flag so the main loop() function knows it's okay to use it
         // Serial.println(F("DMP ready! Waiting for first interrupt..."));
@@ -338,25 +244,17 @@ void setup() {
     }
 }
 
-// ================================================================
-// ===                    MAIN PROGRAM LOOP                     ===
-// ================================================================
-
 void loop() {
-    // if programming failed, don't try to do anything
-    // if (!dmpReady[0]) return;
+
     // startTime = micros();
-    getMPUData();
-    // getData(&mpu0, 0, BODY);
-
-
+    readMPUData(&mpu0, 0, BODY);
 
     // endTime = micros();
 
     // Serial.print("time: ");
     // Serial.println(endTime-startTime);
     printAll(BODY);
-    printAll(HAND);
+    // printAll(HAND);
 
     delay(100);
 
