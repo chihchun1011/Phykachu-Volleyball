@@ -22,6 +22,7 @@ THE SOFTWARE.
 ===============================================
 */
 
+#include "Keyboard.h"
 #include "Wire.h"
 #include "I2Cdev.h"
 #include "MPU6050_6Axis_MotionApps20.h"
@@ -32,8 +33,14 @@ THE SOFTWARE.
 #define ARM_UP 3
 
 #define EMG_DATA_LENGTH 200
+#define EMG_LEVEL_1 15
+#define EMG_LEVEL_2 30
 
+enum Action{
+    IDLE, FW, BW, JUMP, HIT_UP, HIT_FW, HIT_DN, DIVE_FW, DIVE_BW
+};
 
+int FLEX_PIN = A1;
 int EMG_PIN = A0;
 
 int EMGData[EMG_DATA_LENGTH];
@@ -55,144 +62,17 @@ VectorInt16 aa;         // [x, y, z]            accel sensor measurements
 VectorInt16 aaReal;     // [x, y, z]            gravity-free accel sensor measurements
 VectorFloat gravity;    // [x, y, z]            gravity vector
 
-VectorInt16 aaWorld[2];    // [x, y, z]            world-frame accel sensor measurements
-float ypr[2][3];           // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
+VectorInt16 aaWorld;    // [x, y, z]            world-frame accel sensor measurements
+float ypr[3];           // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
 
 // {XAccel, YAccel, ZAccel, XGyro, YGyro, ZGyro}
 int16_t MPUOffset[2][6] = {-82, 1479, 1288, 77, 0, 53, // #5
                            -1154, 51, 536, 111, 81, 19}; //#6
 
 unsigned long startTime = 0, endTime = 0;
+Action action;
 
 
-void setOffset(MPU6050* mpu, int16_t* offsets) {
-
-    mpu->setXAccelOffset(offsets[0]);
-    mpu->setYAccelOffset(offsets[1]);
-    mpu->setZAccelOffset(offsets[2]);
-    mpu->setXGyroOffset(offsets[3]);
-    mpu->setYGyroOffset(offsets[4]);
-    mpu->setZGyroOffset(offsets[5]);
-}
-
-
-void printRealWorldAccel(int sensor){
-
-    Serial.print("aworld\t");
-    Serial.print(aaWorld[sensor].x);
-    Serial.print("\t");
-    Serial.print(aaWorld[sensor].y);
-    Serial.print("\t");
-    Serial.println(aaWorld[sensor].z);
-}
-
-void printYPR(int sensor){
-    Serial.print("ypr\t");
-    Serial.print(ypr[sensor][0] * 180/M_PI);
-    Serial.print("\t");
-    Serial.print(ypr[sensor][1] * 180/M_PI);
-    Serial.print("\t");
-    Serial.println(ypr[sensor][2] * 180/M_PI);
-}
-
-void printAll(int sensor){
-    Serial.print("aworld\t");
-    Serial.print(aaWorld[sensor].x);
-    Serial.print("\t");
-    Serial.print(aaWorld[sensor].y);
-    Serial.print("\t");
-    Serial.print(aaWorld[sensor].z);
-    Serial.print("\t");
-    Serial.print("ypr\t");
-    Serial.print(ypr[sensor][0] * 180/M_PI);
-    Serial.print("\t");
-    Serial.print(ypr[sensor][1] * 180/M_PI);
-    Serial.print("\t");
-    Serial.println(ypr[sensor][2] * 180/M_PI);
-}
-
-
-void readMPUData(MPU6050* mpu, int mpuNum, int sensor){
-    // wait for MPU interrupt or extra packet(s) available
-    mpu->resetFIFO();
-    fifoCount[mpuNum] = mpu->getFIFOCount();
-    while (fifoCount[mpuNum] < packetSize[mpuNum]) {
-        fifoCount[mpuNum] = mpu->getFIFOCount();
-    }
-
-    // check for overflow (this should never happen unless our code is too inefficient)
-    if (fifoCount[mpuNum] >= 1024) {
-        // reset so we can continue cleanly
-        mpu->resetFIFO();
-        Serial.println(F("FIFO overflow!"));
-        return;
-    }
-
-    // read a packet from FIFO
-    while(fifoCount[mpuNum] >= packetSize[mpuNum]){ // Lets catch up to NOW, someone is using the dreaded delay()!
-        mpu->getFIFOBytes(fifoBuffer[mpuNum], packetSize[mpuNum]);
-        fifoCount[mpuNum] -= packetSize[mpuNum];
-    }
-
-    // display initial world-frame acceleration, adjusted to remove gravity
-    // and rotated based on known orientation from quaternion
-    mpu->dmpGetQuaternion(&q, fifoBuffer[mpuNum]);
-    mpu->dmpGetAccel(&aa, fifoBuffer[mpuNum]);
-    mpu->dmpGetGravity(&gravity, &q);
-    mpu->dmpGetLinearAccel(&aaReal, &aa, &gravity);
-    mpu->dmpGetLinearAccelInWorld(&aaWorld[sensor], &aaReal, &q);
-    mpu->dmpGetYawPitchRoll(ypr[sensor], &q, &gravity);
-    
-}
-
-int calMPULevel(int* mpuData){
-
-    return 0;
-}
-
-
-void readEMGData(int dt){
-
-    for(int i=0;i<EMG_DATA_LENGTH;++i){
-        EMGData[i] = analogRead(EMG_PIN);
-        delay(dt);
-    }
-}
-
-int calEMGLevel(int* emgData){
-
-    double var = 0.;
-    double mean = 0.;
-    for (int i = 0; i < EMG_DATA_LENGTH; ++i){
-        mean += emgData[i];
-    }
-    mean /= EMG_DATA_LENGTH;
-    for(int i=0;i<EMG_DATA_LENGTH;++i){
-        var += sq(emgData[i]-mean);
-    }
-    var /= EMG_DATA_LENGTH;
-
-    if(var > 20) {
-        return 2;
-    }
-    else if(var > 5){
-        return 1;
-    }
-    else {
-        return 0;
-    }
-}
-
-
-int getMovement(){
-
-    return 0;
-}
-
-void sendMovement(int movement){
-
-    return;
-}
 
 
 
@@ -242,18 +122,23 @@ void setup() {
         Serial.print(devStatus[0]);
         Serial.println(F(")"));
     }
+
+    Keyboard.begin();
 }
 
 void loop() {
 
     // startTime = micros();
-    readMPUData(&mpu0, 0, BODY);
+    readMPUData(&mpu0, 0);
+    action = getAction();
+    sendAction(action);
 
     // endTime = micros();
 
     // Serial.print("time: ");
     // Serial.println(endTime-startTime);
-    printAll(BODY);
+    // printAll(BODY);
+    printRealWorldAccel();
     // printAll(HAND);
 
     delay(100);
@@ -261,4 +146,174 @@ void loop() {
 }
 
 
+void setOffset(MPU6050* mpu, int16_t* offsets) {
+
+    mpu->setXAccelOffset(offsets[0]);
+    mpu->setYAccelOffset(offsets[1]);
+    mpu->setZAccelOffset(offsets[2]);
+    mpu->setXGyroOffset(offsets[3]);
+    mpu->setYGyroOffset(offsets[4]);
+    mpu->setZGyroOffset(offsets[5]);
+}
+
+
+void printRealWorldAccel(){
+
+    Serial.print("aworld\t");
+    Serial.print(aaReal.x);
+    Serial.print("\t");
+    Serial.print(aaReal.y);
+    Serial.print("\t");
+    Serial.println(aaReal.z);
+}
+
+void printYPR(){
+    Serial.print("ypr\t");
+    Serial.print(ypr[0] * 180/M_PI);
+    Serial.print("\t");
+    Serial.print(ypr[1] * 180/M_PI);
+    Serial.print("\t");
+    Serial.println(ypr[2] * 180/M_PI);
+}
+
+void printAll(){
+    Serial.print("aworld\t");
+    Serial.print(aaWorld.x);
+    Serial.print("\t");
+    Serial.print(aaWorld.y);
+    Serial.print("\t");
+    Serial.print(aaWorld.z);
+    Serial.print("\t");
+    Serial.print("ypr\t");
+    Serial.print(ypr[0] * 180/M_PI);
+    Serial.print("\t");
+    Serial.print(ypr[1] * 180/M_PI);
+    Serial.print("\t");
+    Serial.println(ypr[2] * 180/M_PI);
+}
+
+
+void readMPUData(MPU6050* mpu, int mpuNum){
+    // wait for MPU interrupt or extra packet(s) available
+    mpu->resetFIFO();
+    fifoCount[mpuNum] = mpu->getFIFOCount();
+    while (fifoCount[mpuNum] < packetSize[mpuNum]) {
+        fifoCount[mpuNum] = mpu->getFIFOCount();
+    }
+
+    // check for overflow (this should never happen unless our code is too inefficient)
+    if (fifoCount[mpuNum] >= 1024) {
+        // reset so we can continue cleanly
+        mpu->resetFIFO();
+        Serial.println(F("FIFO overflow!"));
+        return;
+    }
+
+    // read a packet from FIFO
+    while(fifoCount[mpuNum] >= packetSize[mpuNum]){ // Lets catch up to NOW, someone is using the dreaded delay()!
+        mpu->getFIFOBytes(fifoBuffer[mpuNum], packetSize[mpuNum]);
+        fifoCount[mpuNum] -= packetSize[mpuNum];
+    }
+
+    // display initial world-frame acceleration, adjusted to remove gravity
+    // and rotated based on known orientation from quaternion
+    mpu->dmpGetQuaternion(&q, fifoBuffer[mpuNum]);
+    mpu->dmpGetAccel(&aa, fifoBuffer[mpuNum]);
+    mpu->dmpGetGravity(&gravity, &q);
+    mpu->dmpGetLinearAccel(&aaReal, &aa, &gravity);
+    mpu->dmpGetLinearAccelInWorld(&aaWorld, &aaReal, &q);
+    mpu->dmpGetYawPitchRoll(ypr, &q, &gravity);
+    
+}
+
+int calMPULevel(int* mpuData){
+
+    return 0;
+}
+
+
+void readEMGData(int dt){
+
+    for(int i=0;i<EMG_DATA_LENGTH;++i){
+        EMGData[i] = analogRead(EMG_PIN);
+        delay(dt);
+    }
+}
+
+int calEMGLevel(int* emgData){
+
+    double var = 0.;
+    double mean = 0.;
+    for (int i = 0; i < EMG_DATA_LENGTH; ++i){
+        mean += emgData[i];
+    }
+    mean /= EMG_DATA_LENGTH;
+    for(int i=0;i<EMG_DATA_LENGTH;++i){
+        var += sq(emgData[i]-mean);
+    }
+    var /= EMG_DATA_LENGTH;
+
+    if(var > EMG_LEVEL_2) {
+        return 2;
+    }
+    else if(var > EMG_LEVEL_1){
+        return 1;
+    }
+    else {
+        return 0;
+    }
+}
+
+
+Action getAction(){
+
+    if(aaReal.x > 200){
+        return Action::FW;
+    }
+
+    return Action::IDLE;
+}
+
+void sendAction(Action action){
+
+    switch(action){
+        case FW:
+            Keyboard.write(KEY_LEFT_ARROW);
+            break;
+        case BW:
+            Keyboard.write(KEY_RIGHT_ARROW);
+            break;
+        case JUMP:
+            Keyboard.write(KEY_UP_ARROW);
+            break;
+        case HIT_UP:
+            Keyboard.press(KEY_UP_ARROW);
+            Keyboard.press(KEY_RETURN);
+            Keyboard.releaseAll();
+            break;
+        case HIT_FW:
+            Keyboard.press(KEY_LEFT_ARROW);
+            Keyboard.press(KEY_RETURN);
+            Keyboard.releaseAll();
+            break;
+        case HIT_DN:
+            Keyboard.press(KEY_DOWN_ARROW);
+            Keyboard.press(KEY_RETURN);
+            Keyboard.releaseAll();
+            break;
+        case DIVE_FW:
+            Keyboard.press(KEY_LEFT_ARROW);
+            Keyboard.press(KEY_RETURN);
+            Keyboard.releaseAll();
+            break;
+        case DIVE_BW:
+            Keyboard.press(KEY_RIGHT_ARROW);
+            Keyboard.press(KEY_RETURN);
+            Keyboard.releaseAll();
+            break;
+        default:
+            break;
+    }
+
+}
 
