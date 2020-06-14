@@ -33,14 +33,14 @@ THE SOFTWARE.
 
 #define THREDSHOLD_FWAC 200
 #define THREDSHOLD_BWAC -200
-#define THREDSHOLD_JPAC 200
+#define THREDSHOLD_JPAC 150
 #define THREDSHOLD_FWV 60
 #define THREDSHOLD_BWV -60
-#define THREDSHOLD_EMG 200
-#define THREDSHOLD_FLEX_POS 45
-#define THREDSHOLD_FLEX_NEG -45
+#define THREDSHOLD_EMG 20
+#define THREDSHOLD_FLEX_POS 50
+#define THREDSHOLD_FLEX_NEG -200
 
-#define AIRTIME 1200
+#define AIRTIME 1200 // (ms)
 
 enum Action{
     FW, BW, JUMP, HIT_UP, HIT_FW, HIT_DN, DIVE_FW, DIVE_BW
@@ -50,7 +50,7 @@ enum LR_STATE{
     IDLE, FWD, BWD
 };
 
-const int FLEX_PIN = A0;
+const int FLEX_PIN = A1;
 const float VCC = 4.98; // Measured voltage of Ardunio 5V line
 const float R_DIV = 10000.0; // Measured resistance of 3.3k resistor
 const float STRAIGHT_RESISTANCE = 21480.0; // resistance when straight
@@ -311,7 +311,7 @@ void readMPUDatas(){
         readMPUData(&mpu0);
         localZs[i] = aaReal.z;
         worldZs[i] = aaWorld.z;
-        printAccel();
+        // printAccel();
     }
     for (int i=0;i<MPU_DATA_LENGTH;++i){
 
@@ -331,25 +331,41 @@ void readMPUDatas(){
 void readAnalogDatas(int dt){
     Serial.println("readAnalogDatas");
     for(int i=0;i<DATA_LENGTH;++i){
-        // EMGData[i] = analogRead(EMG_PIN);
-        EMGData[i] = 0;
+        EMGData[i] = analogRead(EMG_PIN);
+        // EMGData[i] = 0;
         FlexData[i] = analogRead(FLEX_PIN);
         delay(dt);
+        // Serial.print(EMGData[i]);
+        // Serial.print(" ");
     }
+    // Serial.println(" ");
 }
 
 bool isTriggerEMG(){
+    // Serial.print("emg: ");
 
     double var = 0.;
     double mean = 0.;
     for (int i = 0; i < DATA_LENGTH; ++i){
         mean += EMGData[i];
+        // Serial.print(EMGData[i]);
+        // Serial.print(" ");
     }
+    // Serial.println(" ");
+    // Serial.print("emg2: ");
     mean /= DATA_LENGTH;
     for(int i=0;i<DATA_LENGTH;++i){
         var += sq(EMGData[i]-mean);
+        // Serial.print(EMGData[i]-mean);
+        // Serial.print(" ");
     }
+    // Serial.println(" ");
     var /= DATA_LENGTH;
+    var = sqrt(var);
+    Serial.print("EMG: ");
+    Serial.print(mean);
+    Serial.print("     ");
+    Serial.println(var);
     return var > THREDSHOLD_EMG;
 }
 
@@ -421,12 +437,12 @@ void sendAction(Action action){
     switch(action){
         case FW:
             Keyboard.press(KEY_LEFT_ARROW);
-            delay(100);
+            delay(300);
             Keyboard.releaseAll();
             break;
         case BW:
             Keyboard.press(KEY_RIGHT_ARROW);
-            delay(100);
+            delay(300);
             Keyboard.releaseAll();
             break;
         case JUMP:
@@ -437,19 +453,19 @@ void sendAction(Action action){
         case HIT_UP:
             Keyboard.press(KEY_UP_ARROW);
             Keyboard.press(KEY_RETURN);
-            delay(30);
+            delay(200);
             Keyboard.releaseAll();
             break;
         case HIT_FW:
             Keyboard.press(KEY_LEFT_ARROW);
             Keyboard.press(KEY_RETURN);
-            delay(30);
+            delay(200);
             Keyboard.releaseAll();
             break;
         case HIT_DN:
             Keyboard.press(KEY_DOWN_ARROW);
             Keyboard.press(KEY_RETURN);
-            delay(30);
+            delay(200);
             Keyboard.releaseAll();
             break;
         case DIVE_FW:
