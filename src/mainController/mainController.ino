@@ -31,16 +31,28 @@ THE SOFTWARE.
 #define DATA_LENGTH 100
 #define MPU_DATA_LENGTH 10
 
-#define THREDSHOLD_FWAC 200
-#define THREDSHOLD_BWAC -200
-#define THREDSHOLD_JPAC 150
+#define THREDSHOLD_FWAC 150
+#define THREDSHOLD_BWAC -100
+#define THREDSHOLD_JPAC 600
+#define THREDSHOLD_FWAC_ADD 60
+#define THREDSHOLD_BWAC_ADD -60
 #define THREDSHOLD_FWV 60
 #define THREDSHOLD_BWV -60
-#define THREDSHOLD_EMG 20
+#define THREDSHOLD_EMG 30
 #define THREDSHOLD_FLEX_POS 50
 #define THREDSHOLD_FLEX_NEG -200
 
 #define AIRTIME 1200 // (ms)
+
+#define CONTROL_LEFT_PLAYER
+
+#ifdef CONTROL_LEFT_PLAYER
+#define KEY_RETURN 122       // z
+#define KEY_LEFT_ARROW 103   // g (forward)
+#define KEY_RIGHT_ARROW 100  // d (backward)
+#define KEY_UP_ARROW 114     // r
+#define KEY_DOWN_ARROW 102   // f
+#endif
 
 enum Action{
     FW, BW, JUMP, HIT_UP, HIT_FW, HIT_DN, DIVE_FW, DIVE_BW
@@ -50,15 +62,15 @@ enum LR_STATE{
     IDLE, FWD, BWD
 };
 
+const int EMG_PIN = A0;
 const int FLEX_PIN = A1;
+
 const float VCC = 4.98; // Measured voltage of Ardunio 5V line
 const float R_DIV = 10000.0; // Measured resistance of 3.3k resistor
 const float STRAIGHT_RESISTANCE = 21480.0; // resistance when straight
 const float BEND_RESISTANCE = 18680.0; // resistance at 90 deg
+
 int FlexData[DATA_LENGTH];
-
-
-int EMG_PIN = A0;
 int EMGData[DATA_LENGTH];
 
 
@@ -143,10 +155,7 @@ void setup() {
         Serial.print(devStatus);
         Serial.println(F(")"));
     }
-    // for(int i=0;i<20;++i){
-    //     readMPUDatas();
-    //     delay(100);
-    // }
+
     delay(4000);
     Serial.println("============================ End init ============================");
     Keyboard.begin();
@@ -155,72 +164,73 @@ void setup() {
 
 void loop() {
 
-    // startTime = micros();
     readAnalogDatas(1);
     readMPUDatas();
 
     // printAccel();
 
-    if(lr_state == LR_STATE::IDLE){
-        velocity = 0;
-        if(localZ > THREDSHOLD_FWAC){
-            velocity += localZ > 60 ? localZ : 0;
-            lr_state = LR_STATE::FWD;
-            // sendAction(Action::FW);
-        }
-        if(localZ < THREDSHOLD_BWAC){
-            velocity += localZ < -60 ? localZ : 0;
-            lr_state = LR_STATE::BWD;
-            // sendAction(Action::BW);
-        }
-    }
-    else if(lr_state == LR_STATE::FWD){
-        velocity += localZ > 60 ? localZ : 0;
-        if(localZ > THREDSHOLD_FWAC || 1){
+    switch(lr_state){
+        case IDLE:
+            velocity = 0;
+            if(localZ > THREDSHOLD_FWAC){
+                velocity += localZ > THREDSHOLD_FWAC_ADD ? localZ : 0;
+                lr_state = LR_STATE::FWD;
+            }
+            if(localZ < THREDSHOLD_BWAC){
+                velocity += localZ < THREDSHOLD_BWAC_ADD ? localZ : 0;
+                lr_state = LR_STATE::BWD;
+            }
+            break;
+
+        case FWD:
             sendAction(Action::FW);
-        }
-        if(velocity < THREDSHOLD_FWV){
-            lr_state = LR_STATE::IDLE;
-        }
-    }
-    else{ // lr_state == le_state::BW
-        velocity += localZ < -60 ? localZ : 0;
-        if(localZ < THREDSHOLD_BWAC || 1){
+            velocity += localZ > THREDSHOLD_FWAC_ADD ? localZ : 0;
+
+            if(velocity < THREDSHOLD_FWV){
+                lr_state = LR_STATE::IDLE;
+            }
+            break;
+
+        case BWD:
             sendAction(Action::BW);
-        }
-        if(velocity > THREDSHOLD_BWV){
-            lr_state = LR_STATE::IDLE;
-        }
+            velocity += localZ < THREDSHOLD_BWAC_ADD ? localZ : 0;
+
+            if(velocity > THREDSHOLD_BWV){
+                lr_state = LR_STATE::IDLE;
+            }
+            break;
     }
+
+    
     if(localZ < THREDSHOLD_FWAC && localZ > THREDSHOLD_BWAC){
         consec_noacc += 1;
     }
     if(consec_noacc == 3){
-        Serial.println("BAD");
+        // Serial.println("BAD");
         velocity = 0;
         lr_state = LR_STATE::IDLE;
         consec_noacc = 0;
     }
 
-    Serial.print("State: ");
-    switch(lr_state){
-        case FWD:
-            Serial.println("FWD");
-            break;
-        case BWD:
-            Serial.println("BWD");
-            break;
-        case IDLE:
-            Serial.println("IDLE");
-            break;
+    // Serial.print("State: ");
+    // switch(lr_state){
+    //     case FWD:
+    //         Serial.println("FWD");
+    //         break;
+    //     case BWD:
+    //         Serial.println("BWD");
+    //         break;
+    //     case IDLE:
+    //         Serial.println("IDLE");
+    //         break;
 
-    }
+    // }
     Serial.print("Velo: ");
     Serial.println(velocity);
 
 
     if (inAir) {
-        Serial.println("inAir");
+        // Serial.println("inAir");
         if (isTriggerEMG()){
             sendAction(getFlexLevel());
         }
@@ -247,10 +257,6 @@ void loop() {
 
     }
 
-
-    // endTime = micros();
-    // Serial.print("Time: ");
-    // Serial.println(endTime-startTime);
     // delay(1000);
 
 }
@@ -301,7 +307,7 @@ void readMPUData(MPU6050* mpu){
 
 
 void readMPUDatas(){
-    Serial.println("readMPUDatas");
+    // Serial.println("readMPUDatas");
     float localZs[MPU_DATA_LENGTH];
     float worldZs[MPU_DATA_LENGTH];
     localZ = 0.;
@@ -329,7 +335,7 @@ void readMPUDatas(){
 
 
 void readAnalogDatas(int dt){
-    Serial.println("readAnalogDatas");
+    // Serial.println("readAnalogDatas");
     for(int i=0;i<DATA_LENGTH;++i){
         EMGData[i] = analogRead(EMG_PIN);
         // EMGData[i] = 0;
@@ -391,58 +397,56 @@ Action getFlexLevel(){
         return Action::HIT_UP;
     }
     else if (angle < THREDSHOLD_FLEX_NEG){
-        return Action::HIT_FW;
+        return Action::HIT_DN;
     }
     else {
-        return Action::HIT_DN;
+        return Action::HIT_FW;
     }
 
 }
 
 void sendAction(Action action){
-    Serial.print("Send: ");
 
-    switch(action){
-        case FW:
-            Serial.println("FW");
-            break;
-        case BW:
-            Serial.println("BW");
-            break;
-        case JUMP:
-            Serial.println("JUMP");
-            break;
-        case HIT_UP:
-            Serial.println("HIT_UP");
-            break;
-        case HIT_FW:
-            Serial.println("HIT_FW");
-            break;
-        case HIT_DN:
-            Serial.println("HIT_DN");
-            break;
-        case DIVE_FW:
-            Serial.println("DIVE_FW");
-            break;
-        case DIVE_BW:
-            Serial.println("DIVE_BW");
-            break;
-        default:
-            break;
-    }
-    // return
-
-    ;
+    // Serial.print("Send: ");
+    // switch(action){
+    //     case FW:
+    //         Serial.println("FW");
+    //         break;
+    //     case BW:
+    //         Serial.println("BW");
+    //         break;
+    //     case JUMP:
+    //         Serial.println("JUMP");
+    //         break;
+    //     case HIT_UP:
+    //         Serial.println("HIT_UP");
+    //         break;
+    //     case HIT_FW:
+    //         Serial.println("HIT_FW");
+    //         break;
+    //     case HIT_DN:
+    //         Serial.println("HIT_DN");
+    //         break;
+    //     case DIVE_FW:
+    //         Serial.println("DIVE_FW");
+    //         break;
+    //     case DIVE_BW:
+    //         Serial.println("DIVE_BW");
+    //         break;
+    //     default:
+    //         break;
+    // }
+    // return;
 
     switch(action){
         case FW:
             Keyboard.press(KEY_LEFT_ARROW);
-            delay(300);
+            delay(100);
             Keyboard.releaseAll();
             break;
         case BW:
             Keyboard.press(KEY_RIGHT_ARROW);
-            delay(300);
+            delay(100);
             Keyboard.releaseAll();
             break;
         case JUMP:
@@ -502,29 +506,4 @@ void printAccel(){
     Serial.print("\t");
     Serial.println(aaWorld.z);
 }
-
-// void printYPR(){
-//     Serial.print("ypr\t");
-//     Serial.print(ypr[0] * 180/M_PI);
-//     Serial.print("\t");
-//     Serial.print(ypr[1] * 180/M_PI);
-//     Serial.print("\t");
-//     Serial.println(ypr[2] * 180/M_PI);
-// }
-
-// void printAll(){
-//     Serial.print("aworld\t");
-//     Serial.print(aaWorld.x);
-//     Serial.print("\t");
-//     Serial.print(aaWorld.y);
-//     Serial.print("\t");
-//     Serial.print(aaWorld.z);
-//     Serial.print("\t");
-//     Serial.print("ypr\t");
-//     Serial.print(ypr[0] * 180/M_PI);
-//     Serial.print("\t");
-//     Serial.print(ypr[1] * 180/M_PI);
-//     Serial.print("\t");
-//     Serial.println(ypr[2] * 180/M_PI);
-// }
 
